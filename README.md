@@ -62,8 +62,8 @@ Follow these steps to set up the environment on **Kali Linux** or **Ubuntu**:
 5. **Download the Script**:
    - Clone this repository or download `OpenVpn.py`:
      ```bash
-     git clone <your-repository-url>
-     cd <repository-directory>
+     git clone https://github.com/Blindsinner/OpenVPN-Automation-Script.git
+     cd OpenVPN-Automation-Script
      ```
 
 ## Usage
@@ -101,7 +101,7 @@ The script automates the entire process of setting up and connecting to a VPNBoo
    - Cleans up old VPN files in `/tmp/vpn_configs`.
    - Downloads `.zip` files containing `.ovpn` configurations from VPNBook.
    - Extracts and modifies `.ovpn` files to bypass VPN for:
-     - IP `77.254.229.234`.
+     - IP `77.254.229.234`. (You should use your own real ip)
      - Ports 3389 (RDP) and 22 (SSH).
    - Configures the firewall to allow RDP and SSH traffic.
    - Tests each VPN server’s latency by pinging `8.8.8.8`.
