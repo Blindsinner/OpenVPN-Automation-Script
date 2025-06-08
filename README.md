@@ -6,7 +6,7 @@ This Python script automates the process of downloading, configuring, and connec
 
 ## Features
 - **Automatic Download**: Fetches OpenVPN configuration files from VPNBook.
-- **File Extraction and Modification**: Extracts `.ovpn` files and adds custom routes to bypass VPN for specific IPs (e.g., 77.254.229.234) and ports (3389 for RDP, 22 for SSH).
+- **File Extraction and Modification**: Extracts `.ovpn` files and adds custom routes to bypass VPN for specific IPs. An Example IP is Given but you should replace with your own REAL IP (e.g., 77.254.229.234, you should put your real ip there) and ports (3389 for RDP, 22 for SSH).
 - **Firewall Configuration**: Configures the system firewall to allow RDP and SSH traffic.
 - **Latency Testing**: Tests each VPN server’s latency by pinging Google’s DNS (8.8.8.8) and selects the fastest one.
 - **VPN Connection**: Connects to the best VPN server using OpenVPN with provided credentials.
