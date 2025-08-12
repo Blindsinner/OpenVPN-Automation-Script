@@ -69,6 +69,10 @@ Follow these steps to set up the environment on **Kali Linux** or **Ubuntu**:
 ## Usage
 The script automates the entire process of setting up and connecting to a VPNBook OpenVPN server. Follow these steps:
 
+**Important:**
+
+   **Remember to change the connection protocol to `tcp` otherwise the VPN will not connect.**
+
 ### Step-by-Step Instructions
 1. **Prepare the Script**:
    - Ensure `OpenVpn.py` is in your working directory.
@@ -151,6 +155,10 @@ sudo python3 OpenVpn.py
 
 ## Important Notes
 - **Credential Updates**: The script’s default VPN credentials (`VPN_USERNAME = "vpnbook"`, `VPN_PASSWORD = "cf32e5w"`) are placeholders and will not work if outdated. VPNBook updates these credentials regularly (often weekly or monthly). Before running the script, always visit [vpnbook.com](https://www.vpnbook.com) to get the latest username and password, and update the `VPN_USERNAME` and `VPN_PASSWORD` lines in `OpenVpn.py`.
+- **Important:**
+
+**Remember to change the connection protocol to `tcp` otherwise the VPN will not connect.**
+
 - **Legal Use**: Only use this script for educational purposes or with explicit permission. Unauthorized VPN usage may violate laws or terms of service.
 - **Security**: The script disables HTTPS warnings (`urllib3.disable_warnings`) for simplicity. In production, verify SSL certificates.
 - **Firewall**: The script enables UFW rules for ports 3389 and 22. To reset UFW:
