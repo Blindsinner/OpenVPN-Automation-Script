@@ -1,4 +1,4 @@
-# Ultimate VPN Connector
+# Ultimate VPN Connector (OpenVPN-Automation-Script)
 
 **Author**: MD FAYSAL MAHMUD
 
