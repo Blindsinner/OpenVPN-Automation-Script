@@ -97,7 +97,7 @@ def is_admin():
     return False
 
 class SettingsWindow(tk.Toplevel):
-    # ... (This class is unchanged and remains complete) ...
+    
     def __init__(self, master_app):
         super().__init__(master_app.root)
         self.transient(master_app.root)
@@ -976,3 +976,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
