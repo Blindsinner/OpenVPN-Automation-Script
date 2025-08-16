@@ -32,8 +32,8 @@ if sys.platform == "darwin":
     from plistlib import dumps as plist_dump
 
 PLATFORM_DETAILS = {
-    'linux': { 'name': 'linux', 'ping_cmd': ["ping", "-c", "3", "-W", "5"], 'ping_pattern': r"rtt min/avg/max/mdev = [\d.]+/([\d.]+)/", 'sudo_prefix': ["sudo"], 'kill_cmd': ["killall", "-SIGTERM", "openvpn"], 'creationflags': 0, 'get_gateway_cmd': ["ip", "route", "show", "default"], 'gateway_pattern': r"default via ([\d\.]+) dev ([\w]+)", 'vpn_gateway_cmd': ["ip", "route", "show", "dev", "tun0"], 'vpn_gateway_pattern': r"default via ([\d\.]+) dev tun0" },
-    'windows': { 'name': 'windows', 'ping_cmd': ["ping", "-n", "3", "-w", "5000"], 'ping_pattern': r"Average = (\d+)ms", 'sudo_prefix': [], 'kill_cmd': None, 'creationflags': subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0, 'get_gateway_cmd': ["ipconfig"], 'gateway_pattern': r"Default Gateway . . . . . . . . . . : ([\d\.]+)", 'vpn_gateway_cmd': ["route", "print", "-4"], 'vpn_gateway_pattern': r"0\.0\.0\.0\s+0\.0\.0\.0\s+([\d\.]+)\s+([\d\.]+)\s+\d+" },
+    'linux': { 'name': 'linux', 'ping_cmd': ["ping", "-c", "3", "-W", "5"], 'ping_pattern': r"rtt min/avg/max/mdev = [\d.]+/([\d.]+)/", 'sudo_prefix': ["sudo"], 'kill_cmd': ["killall", "-SIGTERM", "openvpn"], 'creationflags': 0, 'get_gateway_cmd': ["ip", "route", "show", "default"], 'gateway_pattern': r"default via ([\d\.]+) dev ([\w]+)", 'vpn_gateway_cmd': ["ip", "route", "show", "dev", "tun0"], 'vpn_gateway_pattern': r"0\.0\.0\.0/1\s+via\s+([\d\.]+)" },
+    'windows': { 'name': 'windows', 'ping_cmd': ["ping", "-n", "3", "-w", "5000"], 'ping_pattern': r"Average = (\d+)ms", 'sudo_prefix': [], 'kill_cmd': None, 'creationflags': subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0, 'get_gateway_cmd': ["route", "print", "-4"], 'gateway_pattern': r"0\.0\.0\.0\s+0\.0\.0\.0\s+([\d\.]+)", 'vpn_gateway_cmd': ["route", "print", "-4"], 'vpn_gateway_pattern': r"0\.0\.0\.0\s+0\.0\.0\.0\s+([\d\.]+)\s+([\d\.]+)\s+\d+" },
     'macos': { 'name': 'macos', 'ping_cmd': ["ping", "-c", "3", "-W", "5"], 'ping_pattern': r"rtt min/avg/max/mdev = [\d.]+/([\d.]+)/", 'sudo_prefix': ["sudo"], 'kill_cmd': ["killall", "-SIGTERM", "openvpn"], 'creationflags': 0, 'get_gateway_cmd': ["netstat", "-nr"], 'gateway_pattern': r"^default\s+([\d\.]+)", 'vpn_gateway_pattern': r"^default\s+[\d\.]+\s+[\w\s]+\s+tun0" }
 }
 
@@ -705,12 +705,41 @@ class VPNConnectorApp:
             self.log(f"Failed to get default gateway: {e}", "ERROR")
         return None, None
     def get_vpn_gateway(self):
-        try:
-            result = subprocess.run(PLATFORM_CONFIG['vpn_gateway_cmd'], capture_output=True, text=True)
-            if match := re.search(PLATFORM_CONFIG['vpn_gateway_pattern'], result.stdout, re.MULTILINE):
-                return match.group(1)
-        except Exception as e:
-            self.log(f"Failed to get VPN gateway: {e}", "ERROR")
+        # Retry for a few seconds as the OS might be slow to update the routing table
+        for attempt in range(1, 6): # Retry up to 5 times
+            self.log(f"Attempting to find VPN gateway (Attempt {attempt}/5)...")
+            try:
+                result = subprocess.run(PLATFORM_CONFIG['vpn_gateway_cmd'], capture_output=True, text=True, timeout=5)
+                
+                if PLATFORM == 'windows':
+                    # Method A (Primary): Look for a new default route (0.0.0.0 0.0.0.0)
+                    matches = re.finditer(PLATFORM_CONFIG['vpn_gateway_pattern'], result.stdout, re.MULTILINE)
+                    for match in matches:
+                        gateway_ip = match.group(1)
+                        if gateway_ip != self.original_gateway:
+                            self.log(f"Successfully found new VPN gateway (Method A): {gateway_ip}", "SUCCESS")
+                            return gateway_ip
+
+                    # Method B (Fallback): Look for the more specific 0.0.0.0/1 route
+                    alt_pattern = r"0\.0\.0\.0\s+128\.0\.0\.0\s+([\d\.]+)"
+                    if match := re.search(alt_pattern, result.stdout, re.MULTILINE):
+                        gateway_ip = match.group(1)
+                        self.log(f"Successfully found new VPN gateway (Method B): {gateway_ip}", "SUCCESS")
+                        return gateway_ip
+
+                else: # For Linux/macOS, the first match is usually correct
+                    if match := re.search(PLATFORM_CONFIG['vpn_gateway_pattern'], result.stdout, re.MULTILINE):
+                        vpn_gw = match.group(1)
+                        self.log(f"Successfully found VPN gateway: {vpn_gw}", "SUCCESS")
+                        return vpn_gw
+
+            except Exception as e:
+                self.log(f"Error while getting VPN gateway: {e}", "ERROR")
+                return None # Don't retry if the command itself fails
+            
+            time.sleep(1) # Wait 1 second before the next attempt
+        
+        self.log(f"Failed to get VPN gateway after 5 attempts.", "ERROR")
         return None
     def enable_kill_switch(self):
         try:
