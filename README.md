@@ -75,7 +75,7 @@ Because the script is self-healing, the installation is incredibly simple across
 #### Step 1: Download the Script
 Clone the repository or just download the `VPN_Connector.py` script file.
 ```bash
-git clone [https://github.com/Blindsinner/OpenVPN-Automation-Script.git](https://github.com/Blindsinner/OpenVPN-Automation-Script.git)
+git clone https://github.com/Blindsinner/OpenVPN-Automation-Script.git
 cd OpenVPN-Automation-Script
 ```
 
