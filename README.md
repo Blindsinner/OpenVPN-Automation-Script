@@ -1,167 +1,191 @@
-# OpenVPN Automation Script
+# Ultimate VPN Connector
 
 **Author**: MD FAYSAL MAHMUD
 
-This Python script automates the process of downloading, configuring, and connecting to free OpenVPN servers provided by VPNBook. It downloads VPN configuration files, extracts them, modifies them to bypass specific IPs and ports (e.g., for RDP and SSH), tests the servers for latency, and connects to the fastest one. The script is designed for educational purposes and should be used responsibly in a legal and authorized environment.
+This Python script, `VPN_Connector.py`, provides a feature-rich, cross-platform GUI application for managing OpenVPN connections. It automates downloading, configuring, and connecting to VPN servers, with advanced features like split tunneling, a kill switch, and bandwidth monitoring. Designed for Linux, Windows, and macOS, it includes self-healing dependency management for ease of use. This script is for educational purposes and should be used responsibly in a legal and authorized environment.
 
 ## Features
-- **Automatic Download**: Fetches OpenVPN configuration files from VPNBook.
-- **File Extraction and Modification**: Extracts `.ovpn` files and adds custom routes to bypass VPN for specific IPs. An Example IP is Given but you should replace with your own REAL IP (e.g., 77.254.229.234, you should put your real ip there) and ports (3389 for RDP, 22 for SSH).
-- **Firewall Configuration**: Configures the system firewall to allow RDP and SSH traffic.
-- **Latency Testing**: Tests each VPN server’s latency by pinging Google’s DNS (8.8.8.8) and selects the fastest one.
-- **VPN Connection**: Connects to the best VPN server using OpenVPN with provided credentials.
-- **Error Handling**: Includes logging for debugging and error tracking.
+- **Cross-Platform Support**: Works on Linux, Windows, and macOS with platform-specific configurations.
+- **Self-Healing Dependency Management**: Automatically detects and installs missing Python libraries (`requests`, `psutil`) and OpenVPN.
+- **VPN Configuration Management**:
+  - Downloads `.zip` files containing `.ovpn` configurations from user-specified URLs (including Google Drive support).
+  - Extracts and processes `.ovpn` files, adding custom DNS and credentials.
+  - Supports importing custom `.ovpn` files.
+- **Server Selection**:
+  - Displays available VPN servers in a GUI dropdown with filtering and favoriting.
+  - "Auto (Best Performance)" mode pings servers and connects to the fastest one.
+- **Credential Management**:
+  - Supports multiple credential profiles for different VPN servers.
+  - Securely stores credentials with restricted permissions.
+- **Connection Management**:
+  - Supports UDP, TCP, or automatic protocol selection.
+  - Auto-reconnects on connection drops (configurable).
+  - Displays real-time connection status and public IP.
+- **Split Tunneling**:
+  - **IP Split Tunneling**: Routes specific IPs/subnets to bypass or use the VPN (exclude/include modes).
+  - **App Split Tunneling** (Linux only): Routes traffic from specific applications to bypass or use the VPN.
+- **Firewall Kill Switch** (Linux only): Uses `ufw` to block all traffic except through the VPN interface.
+- **Bandwidth Monitoring**: Displays upload/download speeds for the VPN interface.
+- **Auto-Start and Auto-Connect**:
+  - Configures the application to start with the system.
+  - Optionally connects to a VPN server on startup.
+- **Logging**: Detailed, color-coded logs in the GUI and a log file for debugging.
+- **Error Handling**: Robust handling of network issues, missing dependencies, and permission errors.
 
 ## Requirements
-To run this script on **Kali Linux** or **Ubuntu**, you need the following:
+To run this script, you need:
 
 ### Software
-- **Python 3**: Version 3.6 or higher (pre-installed on Kali/Ubuntu).
+- **Python 3**: Version 3.6 or higher (pre-installed on most Linux/macOS systems).
 - **OpenVPN**: For connecting to VPN servers.
-- **Unzip**: To extract `.zip` files.
-- **UFW**: For firewall configuration (optional, but used by the script).
-- **Ping**: For latency testing (part of `iputils-ping`).
+- **tkinter**: For the GUI (usually included with Python).
+- **Unzip**: For extracting `.zip` files (Linux/macOS).
+- **UFW**: For the kill switch (Linux only, optional).
+- **Ping**: For latency testing (part of `iputils-ping` on Linux).
+- **Homebrew**: For OpenVPN installation on macOS (optional).
 
 ### Python Packages
 - `requests`: For downloading files.
-- `urllib3`: For handling HTTPS requests.
-- `zipfile`: For extracting `.zip` files (included in Python standard library).
-- `subprocess`: For running system commands (included in Python standard library).
-- `shutil`: For file operations (included in Python standard library).
-- `logging`: For logging (included in Python standard library).
-- `glob`: For file pattern matching (included in Python standard library).
-- `typing`: For type hints (included in Python standard library).
+- `psutil`: For bandwidth monitoring and interface detection.
+- `tkinter`, `zipfile`, `shutil`, `logging`, `subprocess`, `glob`, `json`, `tempfile`, `re`, `queue`, `socket`: Included in the Python standard library.
+- Platform-specific: `winreg` (Windows), `plistlib` (macOS).
 
 ### System Permissions
-- **Root Privileges**: The script uses `sudo` for OpenVPN and UFW commands, so you need administrative access.
+- **Root/Administrator Privileges**: Required for managing network routes, firewall rules, and installing dependencies.
 
 ## Installation
-Follow these steps to set up the environment on **Kali Linux** or **Ubuntu**:
+Follow these steps to set up the environment:
 
+### Linux (Ubuntu/Kali)
 1. **Update Your System**:
    ```bash
    sudo apt update && sudo apt upgrade -y
    ```
-
 2. **Install Required Software**:
    ```bash
    sudo apt install -y python3 python3-pip openvpn unzip iputils-ping ufw
    ```
-
 3. **Install Python Packages**:
    ```bash
-   pip3 install requests urllib3
+   pip3 install requests psutil
+   ```
+4. **Verify Installation**:
+   - Python: `python3 --version`
+   - OpenVPN: `openvpn --version`
+   - UFW (optional): `ufw --version`
+   - pip: `pip3 --version`
+
+### Windows
+1. Ensure Python 3 is installed (`python --version`).
+2. The script will attempt to install OpenVPN automatically if missing.
+3. Install Python packages:
+   ```bash
+   pip install requests psutil
    ```
 
-4. **Verify Installation**:
-   - Check Python version: `python3 --version`
-   - Check OpenVPN: `openvpn --version`
-   - Check UFW: `ufw --version`
-   - Check pip: `pip3 --version`
+### macOS
+1. Install Homebrew (if not already installed):
+   ```bash
+   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+   ```
+2. Install dependencies:
+   ```bash
+   brew install python openvpn
+   ```
+3. Install Python packages:
+   ```bash
+   pip3 install requests psutil
+   ```
 
-5. **Download the Script**:
-   - Clone this repository or download `OpenVpn.py`:
-     ```bash
-     git clone https://github.com/Blindsinner/OpenVPN-Automation-Script.git
-     cd OpenVPN-Automation-Script
-     ```
+### Download the Script
+- Clone the repository or download `VPN_Connector.py`:
+  ```bash
+  git clone https://github.com/Blindsinner/OpenVPN-Automation-Script.git
+  cd OpenVPN-Automation-Script
+  ```
 
 ## Usage
-The script automates the entire process of setting up and connecting to a VPNBook OpenVPN server. Follow these steps:
-
-**Important:**
-
-   **Remember to change the connection protocol to `tcp` otherwise the VPN will not connect.**
+The script provides a GUI to manage OpenVPN connections. Follow these steps:
 
 ### Step-by-Step Instructions
 1. **Prepare the Script**:
-   - Ensure `OpenVpn.py` is in your working directory.
-   - Make it executable:
+   - Ensure `VPN_Connector.py` is in your working directory.
+   - Make it executable (Linux/macOS):
      ```bash
-     chmod +x OpenVpn.py
+     chmod +x VPN_Connector.py
      ```
 
-2. **Update VPN Credentials**:
-   - The script contains the following default VPNBook credentials:
-     ```python
-     VPN_USERNAME = "vpnbook"
-     VPN_PASSWORD = "cf32e5w"
-     ```
-   - **Important**: VPNBook changes these credentials periodically (often weekly or monthly). You must update these lines in `OpenVpn.py` with the latest username and password from [vpnbook.com](https://www.vpnbook.com).
-   - To update:
-     1. Open `OpenVpn.py` in a text editor (e.g., `nano OpenVpn.py`).
-     2. Visit [vpnbook.com](https://www.vpnbook.com) and find the current OpenVPN username and password.
-     3. Replace the `VPN_USERNAME` and `VPN_PASSWORD` values in the script with the new credentials.
-     4. Save and close the file.
-
-3. **Run the Script**:
-   ```bash
-   sudo python3 OpenVpn.py
-   ```
-   - **Why `sudo`?** The script needs root privileges for OpenVPN and UFW commands.
-   - You’ll be prompted for your system password.
-
-4. **What the Script Does**:
-   - Cleans up old VPN files in `/tmp/vpn_configs`.
-   - Downloads `.zip` files containing `.ovpn` configurations from VPNBook.
-   - Extracts and modifies `.ovpn` files to bypass VPN for:
-     - IP `77.254.229.234`. (You should use your own real ip)
-     - Ports 3389 (RDP) and 22 (SSH).
-   - Configures the firewall to allow RDP and SSH traffic.
-   - Tests each VPN server’s latency by pinging `8.8.8.8`.
-   - Connects to the fastest VPN server using OpenVPN.
-
-5. **Monitor Output**:
-   - The script logs progress (e.g., downloading, extracting, connecting).
-   - Example output:
-     ```
-     2025-06-08 21:24:35,123 - INFO - Old VPN files removed.
-     2025-06-08 21:24:36,456 - INFO - Downloading: https://www.vpnbook.com/free-openvpn-account/vpnbook-openvpn-ca149.zip
-     2025-06-08 21:24:38,789 - INFO - Fastest working VPN: /tmp/vpn_configs/vpnbook-openvpn-ca149/vpnbook-ca149-tcp443.ovpn
-     ```
-   - If successful, OpenVPN will connect, and you’ll see its logs.
-
-6. **Stop the VPN**:
-   - To disconnect, press `Ctrl+C` in the terminal running the script.
-   - Clean up manually if needed:
+2. **Run the Script**:
+   - **Linux/macOS**:
      ```bash
-     sudo rm -rf /tmp/vpn_configs
+     sudo python3 VPN_Connector.py
      ```
+   - **Windows** (run as Administrator):
+     ```bash
+     python VPN_Connector.py
+     ```
+   - **Note**: `sudo` or Administrator rights are required for network and firewall operations.
+
+3. **Initial Setup**:
+   - The script checks for missing dependencies and prompts to install them if needed.
+   - Restart the script after any dependency installation.
+
+4. **Configure Settings**:
+   - Open the "Settings" window from the GUI to:
+     - **Credentials**: Add/edit credential profiles (username/password) for VPN servers.
+     - **Connection**: Set protocol (UDP/TCP/Auto), custom DNS, auto-reconnect, auto-start, and auto-connect.
+     - **Sources**: Add URLs for `.zip` files containing `.ovpn` configurations (e.g., from VPNBook).
+     - **IP Split Tunneling**: Specify IPs/subnets to bypass or use the VPN.
+     - **App Split Tunneling** (Linux only): Select applications to bypass or use the VPN.
+     - **Firewall** (Linux only): Enable the kill switch.
+
+5. **Connect to a VPN**:
+   - Select a server from the dropdown or choose "Auto (Best Performance)" to connect to the fastest server.
+   - Click "Connect" to initiate the connection.
+   - Monitor connection status, public IP, and bandwidth in the GUI.
+   - Use the "Import .ovpn" button to add custom configuration files.
+
+6. **Stop/Disconnect**:
+   - Click "Stop" to cancel a connection attempt.
+   - Click "Disconnect" to terminate an active VPN connection.
+   - To exit, close the GUI window (automatically disconnects).
+
+7. **Verify Connection**:
+   - Check your public IP in the GUI or via:
+     ```bash
+     curl ifconfig.me
+     ```
+   - If the IP differs from your real IP, the VPN is active.
 
 ## Example
 ```bash
-sudo python3 OpenVpn.py
+sudo python3 VPN_Connector.py
 ```
-- The script downloads VPN configurations, tests them, and connects to the fastest server.
-- Check your IP to confirm the VPN is working:
-  ```bash
-  curl ifconfig.me
-  ```
-- If the IP differs from your real IP, the VPN is active.
+- The GUI opens, allowing you to configure settings, select servers, and connect.
+- Logs are displayed in the GUI and saved to `/tmp/vpn_connector.log`.
 
 ## Troubleshooting
-- **Error: “No .zip files downloaded”**:
-  - Check your internet connection.
-  - Ensure VPNBook links in `ZIP_LINKS` are valid (visit [vpnbook.com](https://www.vpnbook.com) to confirm).
-- **Error: “Failed to connect to VPN”**:
-  - Verify OpenVPN is installed (`openvpn --version`).
-  - Ensure the credentials in `OpenVpn.py` (`VPN_USERNAME` and `VPN_PASSWORD`) match the latest ones from [vpnbook.com](https://www.vpnbook.com).
-  - Check that `auth.txt` was created in `/tmp/vpn_configs`.
-- **Error: “Permission denied”**:
-  - Run the script with `sudo`.
-- **Error: “Ping timeout”**:
-  - Some VPN servers may be down. Try running the script again.
-- **Logs**: Check `/tmp/vpn_configs` for files and review terminal logs for errors.
+- **Error: "Admin Rights Required"**:
+  - Run with `sudo` (Linux/macOS) or as Administrator (Windows).
+- **Error: "Dependencies Missing"**:
+  - Allow the script to install missing libraries or OpenVPN, then restart.
+  - Manually install: `pip install requests psutil` or system-specific OpenVPN packages.
+- **Error: "No VPN ZIP links configured"**:
+  - Add `.zip` URLs in the Settings > Sources tab (e.g., from [vpnbook.com](https://www.vpnbook.com)).
+- **Error: "Failed to connect to VPN"**:
+  - Verify credentials in the Settings > Credentials tab (update from VPN provider).
+  - Ensure OpenVPN is installed (`openvpn --version`).
+  - Check `/tmp/vpn_configs/auth.txt` for correct credentials.
+- **Error: "Ping timeout"**:
+  - Some servers may be down; try "Auto" mode or different servers.
+- **Logs**: Check `/tmp/vpn_connector.log` or the GUI log area for details.
 
 ## Important Notes
-- **Credential Updates**: The script’s default VPN credentials (`VPN_USERNAME = "vpnbook"`, `VPN_PASSWORD = "cf32e5w"`) are placeholders and will not work if outdated. VPNBook updates these credentials regularly (often weekly or monthly). Before running the script, always visit [vpnbook.com](https://www.vpnbook.com) to get the latest username and password, and update the `VPN_USERNAME` and `VPN_PASSWORD` lines in `OpenVpn.py`.
-- **Important:**
-
-**Remember to change the connection protocol to `tcp` otherwise the VPN will not connect.**
-
-- **Legal Use**: Only use this script for educational purposes or with explicit permission. Unauthorized VPN usage may violate laws or terms of service.
-- **Security**: The script disables HTTPS warnings (`urllib3.disable_warnings`) for simplicity. In production, verify SSL certificates.
-- **Firewall**: The script enables UFW rules for ports 3389 and 22. To reset UFW:
+- **Credentials**: Update credentials in the Settings > Credentials tab to match your VPN provider’s latest username/password (e.g., from [vpnbook.com](https://www.vpnbook.com)).
+- **Protocol**: Use TCP or UDP as specified by your VPN provider (configurable in Settings > Connection).
+- **Legal Use**: Use this script only for educational purposes or with explicit permission. Unauthorized VPN usage may violate laws or terms of service.
+- **Security**: The script disables HTTPS warnings for simplicity. In production, verify SSL certificates.
+- **Firewall**: The kill switch (Linux only) uses `ufw`. To reset:
   ```bash
   sudo ufw reset
   ```
@@ -179,7 +203,7 @@ This project is licensed under the MIT License. See the `LICENSE` file for detai
 
 ## Acknowledgments
 - **VPNBook**: For providing free OpenVPN configurations.
-- **Python Community**: For libraries like `requests` and `urllib3`.
+- **Python Community**: For libraries like `requests`, `psutil`, and `tkinter`.
 
 ## Contact
-For questions or issues, contact MD FAYSAL MAHMUD via [GitHub Issues](https://github.com/<your-username>/<repository-name>/issues).
+For questions or issues, contact MD FAYSAL MAHMUD via [GitHub Issues](https://github.com/Blindsinner/OpenVPN-Automation-Script/issues).
