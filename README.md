@@ -190,7 +190,8 @@ pip install pyinstaller
 1.  **Prepare**: Place an icon file (e.g., `icon.ico`) in the same folder as the script.
 2.  **Run PyInstaller**: Open a **regular** Command Prompt (not as admin) in the script's folder and run:
     ```
-    pyinstaller --onefile --windowed --icon=icon.ico VPN_Connector.py
+    pyinstaller --onefile --windowed --icon="path\to\your\icon.ico" --uac-admin "path\to\OpenVPN-Automation-Script\vpn_connector.py"
+
     ```
     -   `--onefile`: Creates a single `.exe` file.
     -   `--windowed`: Prevents the console window from appearing behind the GUI.
