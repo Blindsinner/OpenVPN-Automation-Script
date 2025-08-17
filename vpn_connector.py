@@ -14,6 +14,7 @@ import tempfile
 import re
 import queue
 import socket
+import random
 
 # --- Self-Healing Dependency Management ---
 # Attempt to import required libraries. They will be installed if missing.
@@ -32,7 +33,7 @@ if sys.platform == "darwin":
     from plistlib import dumps as plist_dump
 
 PLATFORM_DETAILS = {
-    'linux': { 'name': 'linux', 'ping_cmd': ["ping", "-c", "3", "-W", "5"], 'ping_pattern': r"rtt min/avg/max/mdev = [\d.]+/([\d.]+)/", 'sudo_prefix': ["sudo"], 'kill_cmd': ["killall", "-SIGTERM", "openvpn"], 'creationflags': 0, 'get_gateway_cmd': ["ip", "route", "show", "default"], 'gateway_pattern': r"default via ([\d\.]+) dev ([\w]+)", 'vpn_gateway_cmd': ["ip", "route", "show", "dev", "tun0"], 'vpn_gateway_pattern': r"0\.0\.0\.0/1\s+via\s+([\d\.]+)" },
+    'linux': { 'name': 'linux', 'ping_cmd': ["ping", "-c", "3", "-W", "5"], 'ping_pattern': r"rtt min/avg/max/mdev = [\d.]+/([\d.]+)/", 'sudo_prefix': ["sudo"], 'kill_cmd': ["killall", "-SIGTERM", "openvpn"], 'creationflags': 0, 'get_gateway_cmd': ["ip", "route", "show", "default"], 'gateway_pattern': r"default via ([\d\.]+) dev ([\w\d\.-]+)", 'vpn_gateway_cmd': ["ip", "route", "show", "dev", "tun0"], 'vpn_gateway_pattern': r"0\.0\.0\.0/1\s+via\s+([\d\.]+)" },
     'windows': { 'name': 'windows', 'ping_cmd': ["ping", "-n", "3", "-w", "5000"], 'ping_pattern': r"Average = (\d+)ms", 'sudo_prefix': [], 'kill_cmd': None, 'creationflags': subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0, 'get_gateway_cmd': ["route", "print", "-4"], 'gateway_pattern': r"0\.0\.0\.0\s+0\.0\.0\.0\s+([\d\.]+)", 'vpn_gateway_cmd': ["route", "print", "-4"], 'vpn_gateway_pattern': r"0\.0\.0\.0\s+0\.0\.0\.0\s+([\d\.]+)\s+([\d\.]+)\s+\d+" },
     'macos': { 'name': 'macos', 'ping_cmd': ["ping", "-c", "3", "-W", "5"], 'ping_pattern': r"rtt min/avg/max/mdev = [\d.]+/([\d.]+)/", 'sudo_prefix': ["sudo"], 'kill_cmd': ["killall", "-SIGTERM", "openvpn"], 'creationflags': 0, 'get_gateway_cmd': ["netstat", "-nr"], 'gateway_pattern': r"^default\s+([\d\.]+)", 'vpn_gateway_pattern': r"^default\s+[\d\.]+\s+[\w\s]+\s+tun0" }
 }
@@ -97,7 +98,6 @@ def is_admin():
     return False
 
 class SettingsWindow(tk.Toplevel):
-    # ... (This class is unchanged and remains complete) ...
     def __init__(self, master_app):
         super().__init__(master_app.root)
         self.transient(master_app.root)
@@ -182,19 +182,16 @@ class SettingsWindow(tk.Toplevel):
         apps_frame = ttk.LabelFrame(tab, text="Applications (executable paths)", padding="10"); apps_frame.pack(fill=tk.BOTH, expand=True, pady=(10,0))
         self.apps_listbox = tk.Listbox(apps_frame, height=8)
         self.apps_listbox.pack(fill=tk.BOTH, expand=True, pady=5)
-        for app in self.app.settings.get("split_tunnel_apps", []):
-            self.apps_listbox.insert(tk.END, app)
+        for app in self.app.settings.get("split_tunnel_apps", []): self.apps_listbox.insert(tk.END, app)
         btn_frame = ttk.Frame(apps_frame); btn_frame.pack(fill=tk.X)
         ttk.Button(btn_frame, text="Add", command=self.add_app).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="Remove", command=self.remove_app).pack(side=tk.LEFT, padx=5)
     def add_app(self):
         path = filedialog.askopenfilename(title="Select Application", filetypes=[("Executables", "*"), ("All files", "*.*")])
-        if path and path not in self.apps_listbox.get(0, tk.END):
-            self.apps_listbox.insert(tk.END, path)
+        if path and path not in self.apps_listbox.get(0, tk.END): self.apps_listbox.insert(tk.END, path)
     def remove_app(self):
         sel = self.apps_listbox.curselection()
-        if sel:
-            self.apps_listbox.delete(sel[0])
+        if sel: self.apps_listbox.delete(sel[0])
     def create_firewall_tab(self, tab):
         is_linux = PLATFORM == "linux"; fw_state = tk.NORMAL if is_linux else tk.DISABLED
         self.kill_switch_var = tk.BooleanVar(value=self.app.settings.get("kill_switch", False)); ttk.Checkbutton(tab, text="Enable Firewall Kill Switch (Linux/ufw only)", variable=self.kill_switch_var, state=fw_state).pack(anchor=tk.W, pady=5)
@@ -222,8 +219,11 @@ class VPNConnectorApp:
         self.vpn_process = None; self.is_connected = False; self.is_connecting = False; self.vpn_servers = {}; self.favorites = set(); self.log_queue = queue.Queue(); self.stop_connecting_event = threading.Event(); self.stop_bw_monitor = threading.Event()
         self.original_gateway = None; self.original_iface = None; self.vpn_gateway = None; self.active_routes = []; self.openvpn_executable_path = openvpn_path; self.vpn_interface_name = None
         self.app_split_setup = False
-        self.up_interfaces_before_connect = set() # For bandwidth monitor fix
+        self.up_interfaces_before_connect = set()
+        self.active_config_path = None
+        self.active_server_name = None
         self.load_settings(); self.create_widgets(); self.root.after(100, self.process_log_queue); threading.Thread(target=self.initial_setup, daemon=True).start()
+
     def create_widgets(self):
         self.main_frame = ttk.Frame(self.root, padding="10"); self.main_frame.pack(fill=tk.BOTH, expand=True)
         top_frame = ttk.Frame(self.main_frame); top_frame.pack(fill=tk.X, pady=5)
@@ -248,6 +248,7 @@ class VPNConnectorApp:
         log_control_frame = ttk.Frame(log_frame); log_control_frame.pack(fill=tk.X, pady=(0, 5)); ttk.Button(log_control_frame, text="Copy Log", command=self.copy_logs_to_clipboard).pack(side=tk.RIGHT)
         self.log_area = scrolledtext.ScrolledText(log_frame, wrap=tk.WORD, height=15, state=tk.DISABLED, bg="#2b2b2b", fg="#a9b7c6"); self.log_area.pack(fill=tk.BOTH, expand=True)
         self.log_area.tag_configure("SUCCESS", foreground="#6a8759"); self.log_area.tag_configure("ERROR", foreground="#ff6b68"); self.log_area.tag_configure("CRITICAL", foreground="#ff6b68", font=("TkDefaultFont", 9, "bold")); self.log_area.tag_configure("WARNING", foreground="#ffc66d"); self.log_area.tag_configure("INFO", foreground="#a9b7c6")
+
     def populate_split_apps_frame(self):
         for widget in self.split_apps_frame.winfo_children():
             widget.destroy()
@@ -256,26 +257,35 @@ class VPNConnectorApp:
             ttk.Label(frame, text=os.path.basename(app)).pack(side=tk.LEFT, padx=5)
             ttk.Button(frame, text="Launch", command=lambda a=app: self.launch_split_app(a)).pack(side=tk.LEFT)
             frame.pack(fill=tk.X, pady=2)
+
     def launch_split_app(self, path):
         try:
-            p = subprocess.Popen([path])
-            time.sleep(1)  # Wait for process to start
-            subprocess.run(["sudo", "cgclassify", "-g", "net_cls:appsplit", str(p.pid)], check=True)
-            self.log(f"Launched {os.path.basename(path)} with split tunneling applied.", "SUCCESS")
+            if not self.app_split_setup:
+                self.log("Cannot launch with split tunneling: The feature is not active.", "ERROR")
+                return
+            user = os.getlogin()
+            cmd = ['sudo', 'ip', 'netns', 'exec', 'appsplit_ns', 'sudo', '-u', user, path]
+            subprocess.Popen(cmd)
+            self.log(f"Launched {os.path.basename(path)} inside network namespace.", "SUCCESS")
         except Exception as e:
-            self.log(f"Failed to launch {path}: {e}", "ERROR")
+            self.log(f"Failed to launch {path} in namespace: {e}", "ERROR")
+
     def process_log_queue(self):
         while not self.log_queue.empty():
             log_entry, level = self.log_queue.get()
             self.log_area.config(state=tk.NORMAL); self.log_area.insert(tk.END, log_entry + "\n", level); self.log_area.config(state=tk.DISABLED); self.log_area.see(tk.END)
         self.root.after(100, self.process_log_queue)
+
     def log(self, message: str, level: str = "INFO"):
         logging.info(f"[{level}] {message}"); self.log_queue.put((f"[{level}] {message}", level))
+
     def copy_logs_to_clipboard(self):
         try: self.root.clipboard_clear(); self.root.clipboard_append(self.log_area.get("1.0", tk.END)); self.log("Log content copied.", "SUCCESS")
         except Exception as e: self.log(f"Failed to copy log: {e}", "ERROR")
+
     def get_default_settings(self):
         return { "credential_profiles": {"Default": {"username":"", "password":""}}, "protocol": "auto", "custom_dns": ["8.8.8.8", "8.8.4.4"], "auto_reconnect": True, "vpn_zip_links": [], "favorites": [], "split_tunnel_mode": "off", "split_tunnel_ips": ["192.168.0.0/16", "10.0.0.0/8"], "app_split_mode": "off", "split_tunnel_apps": [], "kill_switch": False, "auto_start": False, "auto_connect": False }
+
     def load_settings(self):
         try:
             os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
@@ -285,6 +295,7 @@ class VPNConnectorApp:
         except (FileNotFoundError, json.JSONDecodeError, PermissionError):
             self.settings = self.get_default_settings(); self.favorites = set()
             self.log(f"Failed to load settings from {CONFIG_FILE}. Using defaults.", "WARNING")
+
     def save_settings(self):
         self.settings["favorites"] = sorted(list(self.favorites))
         try:
@@ -293,6 +304,7 @@ class VPNConnectorApp:
             if PLATFORM != 'windows': os.chmod(CONFIG_FILE, 0o600)
             self.set_auto_start(self.settings["auto_start"])
         except (IOError, PermissionError) as e: self.log(f"Failed to save settings to {CONFIG_FILE}: {e}", "ERROR")
+
     def set_auto_start(self, enable):
         app_name = "VPNConnector"
         app_path = f'"{sys.executable}" "{os.path.abspath(__file__)}"'
@@ -340,16 +352,16 @@ class VPNConnectorApp:
             else:
                 subprocess.run(["launchctl", "unload", plist_file], check=False)
                 if os.path.exists(plist_file): os.remove(plist_file)
+
     def open_settings(self):
         if self.is_connecting or self.is_connected: messagebox.showwarning("Warning", "Cannot change settings while connected.")
         else: SettingsWindow(self)
+
     def start_vpn_thread(self):
-        # --- FIX 1: Take a snapshot of currently "UP" network interfaces ---
         if psutil:
             self.up_interfaces_before_connect = {
                 name for name, stats in psutil.net_if_stats().items() if stats.isup
             }
-        # --- END FIX 1 ---
         if self.is_connecting or self.is_connected: return
         profiles = self.settings.get("credential_profiles", {})
         if not any(p.get("username") and p.get("password") for p in profiles.values()):
@@ -359,10 +371,12 @@ class VPNConnectorApp:
         for button in [self.connect_button, self.server_menu, self.disconnect_button]: button.config(state=tk.DISABLED)
         self.stop_button.config(state=tk.NORMAL); self.status_label.config(text="Status: Connecting...", foreground="orange")
         threading.Thread(target=self.run_vpn_procedure, daemon=True).start()
+
     def stop_connection_attempt(self):
         self.log("Stop button clicked.", "WARNING"); self.stop_connecting_event.set()
         if self.vpn_process: self.disconnect_vpn()
         else: self.reset_ui_to_disconnected()
+
     def initial_setup(self):
         try:
             self.log("Performing initial setup...")
@@ -373,6 +387,7 @@ class VPNConnectorApp:
                 self.start_vpn_thread()
         except Exception as e:
             self.log(f"Initial setup failed: {e}", "CRITICAL"); self.root.after(0, lambda: self.status_label.config(text="Status: Setup Failed!", foreground="red"))
+
     def run_vpn_procedure(self):
         try:
             selected_server_name = self.server_var.get(); connection_successful = False
@@ -382,26 +397,28 @@ class VPNConnectorApp:
             self.log(f"Found {len(profile_names)} complete credential profile(s) to probe with: {profile_names}")
             if not profile_names:
                 self.log("No complete credential profiles found.", "ERROR"); self.root.after(0, self.reset_ui_to_disconnected); return
+            
             server_list_to_try = []
             if selected_server_name == "Auto (Best Performance)":
-                server_list_to_try = self.find_best_servers(limit=None) # Get ALL servers, ranked
+                server_list_to_try = self.find_best_servers(limit=None)
                 if not server_list_to_try: self.log("No responsive servers found.", "ERROR"); self.root.after(0, self.reset_ui_to_disconnected); return
-                self.log(f"Found {len(server_list_to_try)} responsive servers. Beginning exhaustive smart connect probe...")
+                self.log(f"Found {len(server_list_to_try)} responsive servers. Beginning smart connect probe...")
             else:
                 vpn_config_path = self.vpn_servers.get(selected_server_name)
                 if not vpn_config_path: self.log("Selected server not found.", "ERROR"); self.root.after(0, self.reset_ui_to_disconnected); return
                 protocol = self._infer_protocol_from_filename(selected_server_name)
                 server_list_to_try.append((vpn_config_path, selected_server_name, protocol))
+
             for config_path, server_name, protocol in server_list_to_try:
                 if self.stop_connecting_event.is_set(): break
                 self.log(f"--- Trying server: {server_name} ---")
+                
+                self.active_config_path = config_path
+                self.active_server_name = server_name
+                
                 if self.settings["kill_switch"] and PLATFORM == "linux":
                     self.disable_kill_switch()
-                    server_address, server_port = self.get_server_address_from_config(config_path)
-                    if server_address:
-                        port = server_port or ("1194" if protocol == "udp" else "443")
-                        subprocess.run(["sudo", "ufw", "insert", "1", "allow", "out", "to", server_address, "port", port, "proto", protocol], check=False)
-                    self.enable_kill_switch()
+                
                 for profile_name in profile_names:
                     if self.stop_connecting_event.is_set(): break
                     self.log(f"Probing with profile: '{profile_name}'")
@@ -413,9 +430,11 @@ class VPNConnectorApp:
                 if connection_successful: break
             if not connection_successful: self.log("All connection attempts failed.", "ERROR"); self.root.after(0, self.reset_ui_to_disconnected)
         except Exception as e: self.log(f"Connection procedure failed: {e}", "CRITICAL"); self.root.after(0, self.reset_ui_to_disconnected)
+
     def cleanup(self):
         if os.path.exists(VPN_CONFIG_DIR): shutil.rmtree(VPN_CONFIG_DIR, ignore_errors=True)
         os.makedirs(VPN_CONFIG_DIR, exist_ok=True); self.log("Old temp files removed.")
+
     def download_vpn_configs(self):
         if not self.settings.get("vpn_zip_links"): self.log("No VPN ZIP links configured.", "INFO"); return
         self.log("Downloading VPN configurations...")
@@ -431,6 +450,7 @@ class VPNConnectorApp:
                             for chunk in r.iter_content(chunk_size=8192): f.write(chunk)
                         self.log(f"Downloaded: {filename}")
                 except Exception as e: self.log(f"Download failed for {zip_link}: {e}", "ERROR")
+
     def _download_gdrive_file(self, url, destination_folder):
         try:
             self.log(f"Processing Google Drive link..."); session = requests.Session(); response = session.get(url, stream=True, timeout=15, verify=False)
@@ -444,6 +464,7 @@ class VPNConnectorApp:
                 for chunk in response.iter_content(chunk_size=8192): f.write(chunk)
             self.log(f"Downloaded from GDrive: {filename}", "SUCCESS")
         except Exception as e: self.log(f"GDrive download failed: {e}", "ERROR")
+
     def extract_zip_files(self):
         self.log("Extracting .zip files...")
         zip_files = glob.glob(os.path.join(VPN_CONFIG_DIR, "*.zip"))
@@ -453,6 +474,7 @@ class VPNConnectorApp:
                 with zipfile.ZipFile(zip_path, 'r') as zr: zr.extractall(VPN_CONFIG_DIR)
                 self.log(f"Extracted {os.path.basename(zip_path)}")
             except zipfile.BadZipFile: self.log(f"Corrupt ZIP file: {zip_path}", "ERROR")
+
     def _process_ovpn_file(self, ovpn_path):
         try:
             with open(ovpn_path, "r+", encoding='utf-8', errors='ignore') as f:
@@ -470,11 +492,13 @@ class VPNConnectorApp:
                 friendly_name = os.path.basename(ovpn_path).replace('.ovpn', '').strip()
                 self.vpn_servers[friendly_name] = ovpn_path
         except Exception as e: self.log(f"Failed to process {ovpn_path}: {e}", "ERROR")
+
     def load_all_ovpn_configs(self):
         self.log("Loading and processing .ovpn files..."); self.vpn_servers = {}
         config_paths = glob.glob(os.path.join(VPN_CONFIG_DIR, "**", "*.ovpn"), recursive=True) + glob.glob(os.path.join(CUSTOM_CONFIG_DIR, "*.ovpn"))
         for ovpn_path in config_paths: self._process_ovpn_file(ovpn_path)
         self.log(f"Found {len(self.vpn_servers)} server configurations.")
+
     def update_server_list_from_filter(self, *args):
         filt = self.filter_var.get().lower(); all_server_names = list(self.vpn_servers.keys())
         favs = [s for s in all_server_names if s in self.favorites and filt in s.lower()]
@@ -483,12 +507,14 @@ class VPNConnectorApp:
         self.server_menu['values'] = server_names; current_selection = self.server_var.get()
         if current_selection not in server_names: self.server_var.set(server_names[0] if server_names else "")
         self.server_menu.config(state='readonly')
+
     def toggle_favorite(self):
         server = self.server_var.get()
         if server and "Auto" not in server:
             if server in self.favorites: self.favorites.remove(server)
             else: self.favorites.add(server)
             self.save_settings(); self.update_server_list_from_filter()
+
     def create_credentials_file(self, username, password):
         file_path = os.path.join(VPN_CONFIG_DIR, "auth.txt")
         try:
@@ -496,22 +522,39 @@ class VPNConnectorApp:
             with open(file_path, "w") as f: f.write(f"{username}\n{password}")
             if PLATFORM != 'windows': os.chmod(file_path, 0o600)
         except Exception as e: self.log(f"Failed to create credentials file {file_path}: {e}", "ERROR")
+
     def _infer_protocol_from_filename(self, filename):
         name_lower = filename.lower(); return 'tcp' if 'tcp' in name_lower else 'udp'
+
     def find_best_servers(self, limit=None):
         if not self.vpn_servers: return []
-        self.log(f"Testing {len(self.vpn_servers)} servers..."); results, threads, result_queue = [], [], queue.Queue()
+        
+        servers_to_test = self.vpn_servers
+        if limit:
+            self.log(f"Testing a random sample of {limit} servers for speed...")
+            if len(self.vpn_servers) > limit:
+                server_items = list(self.vpn_servers.items())
+                random.shuffle(server_items)
+                servers_to_test = dict(server_items[:limit])
+        else:
+            self.log(f"Testing all {len(self.vpn_servers)} servers...")
+
+        results, threads, result_queue = [], [], queue.Queue()
         def test_server(name, config_path):
             if self.stop_connecting_event.is_set(): return
             latency = self._ping_latency(config_path)
             if latency < float('inf'): result_queue.put((latency, config_path, name))
-        for name, config_path in self.vpn_servers.items():
+        
+        for name, config_path in servers_to_test.items():
             if self.stop_connecting_event.is_set(): break
             thread = threading.Thread(target=test_server, args=(name, config_path)); threads.append(thread); thread.start()
         for thread in threads: thread.join(timeout=11)
+        
         while not result_queue.empty(): results.append(result_queue.get())
+        
         results.sort(key=lambda x: x[0])
-        return [(path, name, self._infer_protocol_from_filename(name)) for _, path, name in results[:limit]]
+        return [(path, name, self._infer_protocol_from_filename(name)) for _, path, name in results]
+
     def _ping_latency(self, ovpn_path):
         server_address = None
         try:
@@ -524,15 +567,20 @@ class VPNConnectorApp:
             if match := re.search(PLATFORM_CONFIG['ping_pattern'], result.stdout): return float(match.group(1))
         except Exception as e: self.log(f"Ping failed for {server_address}: {e}", "WARNING")
         return float('inf')
+
     def get_server_address_from_config(self, config_path):
+        if not config_path: return None, None
         try:
-            with open(config_path, 'r') as f:
+            with open(config_path, 'r', encoding='utf-8', errors='ignore') as f:
                 content = f.read()
-                if match := re.search(r'^\s*remote\s+([^\s]+)\s*(\d+)?', content, re.MULTILINE):
+                if match := re.search(r'^\s*remote\s+([^\s]+)\s+(\d+)', content, re.MULTILINE):
                     return match.group(1), match.group(2)
+                if match := re.search(r'^\s*remote\s+([^\s]+)', content, re.MULTILINE):
+                    return match.group(1), None
         except:
             pass
         return None, None
+
     def connect_to_vpn(self, vpn_config, protocol):
         self.log(f"Starting OpenVPN for {os.path.basename(vpn_config)} with {protocol.upper()}..."); status_queue = queue.Queue()
         try:
@@ -560,6 +608,7 @@ class VPNConnectorApp:
                     except: pass
                 return False, "Connection timed out."
         except Exception as e: self.log(f"Failed to start OpenVPN: {e}", "CRITICAL"); self.root.after(0, self.reset_ui_to_disconnected); return False, str(e)
+
     def monitor_connection_state(self, status_queue):
         failure_keywords = { "AUTH_FAILED": "Authentication failed", "auth-failure": "Authentication failed", "TLS Error": "TLS handshake failed", "Cannot resolve host address": "DNS resolution failed", "ERROR:": "Critical OpenVPN error" }
         for line in iter(self.vpn_process.stdout.readline, ''):
@@ -569,9 +618,9 @@ class VPNConnectorApp:
             for keyword, message in failure_keywords.items():
                 if keyword in stripped_line: status_queue.put(('FAILURE', message)); return
         if not self.is_connected and not self.stop_connecting_event.is_set(): status_queue.put(('FAILURE', 'OpenVPN process exited unexpectedly.'))
+
     def update_status_connected(self):
         self.is_connected, self.is_connecting = True, False
-        # --- FIX 2: Find the newly "UP" interface by comparing snapshots of their status ---
         if psutil and hasattr(self, 'up_interfaces_before_connect'):
             time.sleep(3) # Give the OS a moment to fully bring up the interface and its stats
             after_up = {name for name, stats in psutil.net_if_stats().items() if stats.isup}
@@ -580,20 +629,26 @@ class VPNConnectorApp:
                 self.vpn_interface_name = newly_up.pop()
                 self.log(f"Detected newly active VPN interface: '{self.vpn_interface_name}'", "SUCCESS")
             else:
-                self.vpn_interface_name = None # Clear it if not found
+                self.vpn_interface_name = None
                 self.log("Could not detect a newly activated VPN interface. Bandwidth monitor may not work.", "WARNING")
-        # --- END FIX 2 ---
+        
         self.vpn_gateway = self.get_vpn_gateway()
         self.apply_split_tunnel_routes()
         self.setup_app_split_tunneling()
-        if PLATFORM == 'linux' and self.settings.get("app_split_mode", "off") != "off":
+        
+        if self.settings["kill_switch"] and PLATFORM == "linux":
+            self.enable_kill_switch()
+
+        if self.app_split_setup and PLATFORM == 'linux' and self.settings.get("app_split_mode", "off") != "off":
             self.populate_split_apps_frame()
             self.split_apps_frame.pack(after=self.status_label.master, fill=tk.X, pady=5)
+
         self.log("Connection Established!", "SUCCESS"); self.status_label.config(text="Status: Connected", foreground="#6a8759")
         self.disconnect_button.config(state=tk.NORMAL); self.stop_button.config(state=tk.DISABLED); self.server_menu.config(state=tk.DISABLED); self.refresh_ip_button.config(state=tk.NORMAL)
         threading.Thread(target=self.update_public_ip, daemon=True).start()
         self.stop_bw_monitor.clear(); threading.Thread(target=self.bandwidth_monitor_thread, daemon=True).start()
         threading.Thread(target=self.monitor_vpn_process, daemon=True).start()
+
     def monitor_vpn_process(self):
         while self.is_connected and not self.stop_connecting_event.is_set():
             if self.vpn_process.poll() is not None:
@@ -604,51 +659,86 @@ class VPNConnectorApp:
                     self.start_vpn_thread()
                 break
             time.sleep(5)
+
     def setup_app_split_tunneling(self):
         if PLATFORM != 'linux' or self.settings.get("app_split_mode", "off") == "off":
             return
+        
+        self.log("Setting up App Split Tunneling using Network Namespace...", "INFO")
         mode = self.settings["app_split_mode"]
+        ns_name = "appsplit_ns"
+        veth_host = "veth-host"; veth_ns = "veth-ns"
+        veth_host_ip = "192.168.200.1"; veth_ns_ip = "192.168.200.2"; subnet = "24"
+        rt_table_name = "appsplit_rt"; rt_table_id = "100"
+        
         try:
-            subprocess.run(["sudo", "cgcreate", "-g", "net_cls:appsplit"], check=True)
-            with open("/sys/fs/cgroup/net_cls/appsplit/net_cls.classid", "w") as f:
-                f.write("0x00110011")
-            subprocess.run(["sudo", "iptables", "-t", "mangle", "-A", "OUTPUT", "-m", "cgroup", "--cgroup", "0x00110011", "-j", "MARK", "--set-mark", "11"], check=True)
-            rt_tables = "/etc/iproute2/rt_tables"
-            with open(rt_tables, "a+") as f:
-                f.seek(0)
-                if "11 appsplit" not in f.read():
-                    f.write("11 appsplit\n")
-            subprocess.run(["sudo", "ip", "rule", "add", "fwmark", "11", "table", "appsplit"], check=True)
+            self.cleanup_app_split_tunneling()
+            subprocess.run(["sudo", "ip", "netns", "add", ns_name], check=True)
+            subprocess.run(["sudo", "ip", "link", "add", veth_host, "type", "veth", "peer", "name", veth_ns], check=True)
+            subprocess.run(["sudo", "ip", "link", "set", veth_ns, "netns", ns_name], check=True)
+            subprocess.run(["sudo", "ip", "addr", "add", f"{veth_host_ip}/{subnet}", "dev", veth_host], check=True)
+            subprocess.run(["sudo", "ip", "link", "set", veth_host, "up"], check=True)
+            subprocess.run(["sudo", "ip", "netns", "exec", ns_name, "ip", "addr", "add", f"{veth_ns_ip}/{subnet}", "dev", veth_ns], check=True)
+            subprocess.run(["sudo", "ip", "netns", "exec", ns_name, "ip", "link", "set", veth_ns, "up"], check=True)
+            subprocess.run(["sudo", "ip", "netns", "exec", ns_name, "ip", "link", "set", "lo", "up"], check=True)
+            subprocess.run(["sudo", "ip", "netns", "exec", ns_name, "ip", "route", "add", "default", "via", veth_host_ip], check=True)
+            
+            subprocess.run(["sudo", "mkdir", "-p", f"/etc/netns/{ns_name}"], check=True)
+            resolv_content = "nameserver 8.8.8.8\\nnameserver 8.8.4.4\\n"
+            subprocess.run(f'echo "{resolv_content}" | sudo tee /etc/netns/{ns_name}/resolv.conf > /dev/null', shell=True, check=True)
+            
+            subprocess.run(["sudo", "sysctl", "-w", "net.ipv4.ip_forward=1"], check=True)
+            
             if mode == "exclude":
-                gw = self.original_gateway
-                iface = self.original_iface
-                subprocess.run(["sudo", "ip", "route", "add", "default", "via", gw, "dev", iface, "table", "appsplit"], check=True)
-                subprocess.run(["sudo", "iptables", "-t", "nat", "-A", "POSTROUTING", "-m", "cgroup", "--cgroup", "0x00110011", "-o", iface, "-j", "MASQUERADE"], check=True)
+                if not self.original_iface or not self.original_gateway:
+                    raise ValueError("Original network interface or gateway not found for exclude mode.")
+                
+                rt_tables_path = "/etc/iproute2/rt_tables"
+                rt_table_entry = f"{rt_table_id} {rt_table_name}"
+                update_cmd = (
+                    f"grep -qxF '{rt_table_entry}' {rt_tables_path} 2>/dev/null || "
+                    f"echo '{rt_table_entry}' | sudo tee -a {rt_tables_path} > /dev/null"
+                )
+                subprocess.run(update_cmd, shell=True, check=True)
+
+                subprocess.run(["sudo", "ip", "route", "add", "default", "via", self.original_gateway, "dev", self.original_iface, "table", rt_table_name], check=True)
+                subprocess.run(["sudo", "ip", "rule", "add", "from", f"{veth_ns_ip}/32", "lookup", rt_table_name], check=True)
+                subprocess.run(["sudo", "iptables", "-t", "nat", "-A", "POSTROUTING", "-s", f"{veth_ns_ip}/32", "-o", self.original_iface, "-j", "MASQUERADE"], check=True)
+
+                subprocess.run(["sudo", "iptables", "-A", "FORWARD", "-i", self.original_iface, "-o", veth_host, "-m", "state", "--state", "RELATED,ESTABLISHED", "-j", "ACCEPT"], check=True)
+                subprocess.run(["sudo", "iptables", "-A", "FORWARD", "-i", veth_host, "-o", self.original_iface, "-j", "ACCEPT"], check=True)
+            
             elif mode == "include":
-                gw = self.vpn_gateway
-                subprocess.run(["sudo", "ip", "route", "add", "default", "via", gw, "dev", "tun0", "table", "appsplit"], check=True)
-            subprocess.run(["sudo", "ip", "route", "flush", "cache"], check=True)
-            for i in glob.glob("/proc/sys/net/ipv4/conf/*/rp_filter"):
-                with open(i, "w") as f:
-                    f.write("0")
+                if not self.vpn_interface_name:
+                    raise ValueError("VPN network interface not found for include mode.")
+                subprocess.run(["sudo", "iptables", "-t", "nat", "-A", "POSTROUTING", "-s", f"{veth_ns_ip}/32", "-o", self.vpn_interface_name, "-j", "MASQUERADE"], check=True)
+
             self.app_split_setup = True
-            self.log("App-based split tunneling setup complete.", "SUCCESS")
+            self.log("App Split Tunneling (netns) setup complete.", "SUCCESS")
+
         except Exception as e:
-            self.log(f"Failed to setup app split tunneling: {e}", "ERROR")
-    def cleanup_app_split_tunneling(self):
-        if not self.app_split_setup: return
-        try:
-            subprocess.run(["sudo", "iptables", "-t", "mangle", "-D", "OUTPUT", "-m", "cgroup", "--cgroup", "0x00110011", "-j", "MARK", "--set-mark", "11"], check=False)
-            if self.settings["app_split_mode"] == "exclude":
-                subprocess.run(["sudo", "iptables", "-t", "nat", "-D", "POSTROUTING", "-m", "cgroup", "--cgroup", "0x00110011", "-o", self.original_iface, "-j", "MASQUERADE"], check=False)
-            subprocess.run(["sudo", "ip", "rule", "del", "fwmark", "11", "table", "appsplit"], check=False)
-            subprocess.run(["sudo", "ip", "route", "flush", "table", "appsplit"], check=False)
-            subprocess.run(["sudo", "cgdelete", "net_cls:appsplit"], check=False)
-            subprocess.run(["sudo", "ip", "route", "flush", "cache"], check=False)
+            self.log(f"Failed to setup netns app split tunneling: {e}", "ERROR")
+            self.log("App Split Tunneling will be disabled.", "WARNING")
+            self.cleanup_app_split_tunneling()
             self.app_split_setup = False
-            self.log("App-based split tunneling cleaned up.", "SUCCESS")
-        except Exception as e:
-            self.log(f"Failed to cleanup app split tunneling: {e}", "WARNING")
+
+    def cleanup_app_split_tunneling(self):
+        if PLATFORM != 'linux':
+            return
+        ns_name, veth_host, veth_ns_ip, rt_table_name = "appsplit_ns", "veth-host", "192.168.200.2", "appsplit_rt"
+        if self.original_iface: 
+            subprocess.run(["sudo", "iptables", "-t", "nat", "-D", "POSTROUTING", "-s", f"{veth_ns_ip}/32", "-o", self.original_iface, "-j", "MASQUERADE"], check=False, capture_output=True)
+            subprocess.run(["sudo", "iptables", "-D", "FORWARD", "-i", self.original_iface, "-o", veth_host, "-m", "state", "--state", "RELATED,ESTABLISHED", "-j", "ACCEPT"], check=False, capture_output=True)
+            subprocess.run(["sudo", "iptables", "-D", "FORWARD", "-i", veth_host, "-o", self.original_iface, "-j", "ACCEPT"], check=False, capture_output=True)
+        if self.vpn_interface_name: subprocess.run(["sudo", "iptables", "-t", "nat", "-D", "POSTROUTING", "-s", f"{veth_ns_ip}/32", "-o", self.vpn_interface_name, "-j", "MASQUERADE"], check=False, capture_output=True)
+        subprocess.run(["sudo", "ip", "rule", "del", "from", f"{veth_ns_ip}/32", "lookup", rt_table_name], check=False, capture_output=True)
+        subprocess.run(["sudo", "ip", "route", "flush", "table", rt_table_name], check=False, capture_output=True)
+        subprocess.run(["sudo", "ip", "link", "del", veth_host], check=False, capture_output=True)
+        result = subprocess.run(["sudo", "ip", "netns", "del", ns_name], check=False, capture_output=True)
+        if result.returncode == 0 and self.is_connected:
+            self.log("App Split Tunneling (netns) cleaned up.", "SUCCESS")
+        self.app_split_setup = False
+
     def apply_split_tunnel_routes(self):
         mode = self.settings["split_tunnel_mode"]
         if mode == "off": return
@@ -661,14 +751,15 @@ class VPNConnectorApp:
             self.add_route("0.0.0.0/0", self.original_gateway, self.original_iface if PLATFORM == "linux" else None)
             for ip in self.settings["split_tunnel_ips"]:
                 self.add_route(ip, self.vpn_gateway)
+
     def cidr_to_netmask(self, cidr):
-        if '/' not in cidr:
-            return cidr, "255.255.255.255"
+        if '/' not in cidr: return cidr, "255.255.255.255"
         network, bits = cidr.split('/')
         bits = int(bits)
         mask_int = (0xffffffff << (32 - bits)) & 0xffffffff
         mask = '.'.join([str((mask_int >> (i * 8)) & 0xff) for i in range(3, -1, -1)])
         return network, mask
+
     def add_route(self, destination, gateway, interface=None):
         if PLATFORM in ("linux", "macos"):
             cmd = PLATFORM_CONFIG['sudo_prefix'] + ["ip", "route", "add", destination, "via", gateway]
@@ -682,6 +773,7 @@ class VPNConnectorApp:
             self.log(f"Added route {destination} via {gateway}")
         except Exception as e:
             self.log(f"Failed to add route {destination}: {e}", "ERROR")
+
     def delete_route(self, destination, gateway, interface=None):
         if PLATFORM in ("linux", "macos"):
             cmd = PLATFORM_CONFIG['sudo_prefix'] + ["ip", "route", "del", destination, "via", gateway]
@@ -694,6 +786,7 @@ class VPNConnectorApp:
             self.log(f"Deleted route {destination} via {gateway}")
         except Exception as e:
             self.log(f"Failed to delete route {destination}: {e}", "WARNING")
+
     def get_default_gateway(self):
         try:
             result = subprocess.run(PLATFORM_CONFIG['get_gateway_cmd'], capture_output=True, text=True)
@@ -704,30 +797,38 @@ class VPNConnectorApp:
         except Exception as e:
             self.log(f"Failed to get default gateway: {e}", "ERROR")
         return None, None
+
     def get_vpn_gateway(self):
-        # Retry for a few seconds as the OS might be slow to update the routing table
-        for attempt in range(1, 6): # Retry up to 5 times
+        for attempt in range(1, 6):
             self.log(f"Attempting to find VPN gateway (Attempt {attempt}/5)...")
             try:
-                result = subprocess.run(PLATFORM_CONFIG['vpn_gateway_cmd'], capture_output=True, text=True, timeout=5)
+                cmd = None
+                if PLATFORM == 'windows':
+                    cmd = PLATFORM_CONFIG['vpn_gateway_cmd']
+                elif PLATFORM == 'linux' and self.vpn_interface_name:
+                    cmd = ["ip", "route", "show", "dev", self.vpn_interface_name]
+
+                if not cmd:
+                    self.log("Could not determine command to find VPN gateway.", "WARNING")
+                    time.sleep(1)
+                    continue
+
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
                 
                 if PLATFORM == 'windows':
-                    # Method A (Primary): Look for a new default route (0.0.0.0 0.0.0.0)
                     matches = re.finditer(PLATFORM_CONFIG['vpn_gateway_pattern'], result.stdout, re.MULTILINE)
                     for match in matches:
                         gateway_ip = match.group(1)
                         if gateway_ip != self.original_gateway:
                             self.log(f"Successfully found new VPN gateway (Method A): {gateway_ip}", "SUCCESS")
                             return gateway_ip
-
-                    # Method B (Fallback): Look for the more specific 0.0.0.0/1 route
                     alt_pattern = r"0\.0\.0\.0\s+128\.0\.0\.0\s+([\d\.]+)"
                     if match := re.search(alt_pattern, result.stdout, re.MULTILINE):
                         gateway_ip = match.group(1)
                         self.log(f"Successfully found new VPN gateway (Method B): {gateway_ip}", "SUCCESS")
                         return gateway_ip
 
-                else: # For Linux/macOS, the first match is usually correct
+                else: # For Linux/macOS
                     if match := re.search(PLATFORM_CONFIG['vpn_gateway_pattern'], result.stdout, re.MULTILINE):
                         vpn_gw = match.group(1)
                         self.log(f"Successfully found VPN gateway: {vpn_gw}", "SUCCESS")
@@ -735,32 +836,65 @@ class VPNConnectorApp:
 
             except Exception as e:
                 self.log(f"Error while getting VPN gateway: {e}", "ERROR")
-                return None # Don't retry if the command itself fails
+                return None
             
-            time.sleep(1) # Wait 1 second before the next attempt
+            time.sleep(1)
         
         self.log(f"Failed to get VPN gateway after 5 attempts.", "ERROR")
         return None
+
     def enable_kill_switch(self):
+        self.log("ENABLING KILL SWITCH: Applying robust firewall rules...", "WARNING")
         try:
-            subprocess.run(["sudo", "ufw", "reset", "--force"], check=True)
-            subprocess.run(["sudo", "ufw", "default", "deny", "outgoing"], check=True)
-            subprocess.run(["sudo", "ufw", "default", "deny", "incoming"], check=True)
-            subprocess.run(["sudo", "ufw", "allow", "out", "on", "tun0"], check=True)
-            subprocess.run(["sudo", "ufw", "allow", "in", "on", "tun0"], check=True)
+            vpn_server_ip, vpn_server_port_str = self.get_server_address_from_config(self.active_config_path)
+            vpn_protocol = self._infer_protocol_from_filename(self.active_server_name)
+            vpn_server_port = vpn_server_port_str if vpn_server_port_str else ('1194' if vpn_protocol == 'udp' else '443')
+
+            if not all([self.original_iface, vpn_server_ip, vpn_server_port, self.vpn_interface_name]):
+                raise ValueError("Missing critical network details to apply kill switch.")
+
+            subprocess.run(["sudo", "ufw", "reset"], input='y', text=True, check=True, capture_output=True)
+            subprocess.run(["sudo", "ufw", "default", "deny", "outgoing"], check=True, capture_output=True)
+            subprocess.run(["sudo", "ufw", "default", "deny", "incoming"], check=True, capture_output=True)
+            subprocess.run(["sudo", "ufw", "allow", "out", "on", "lo"], check=True, capture_output=True)
+            subprocess.run(["sudo", "ufw", "allow", "in", "on", "lo"], check=True, capture_output=True)
             for net in ["192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12"]:
-                subprocess.run(["sudo", "ufw", "allow", "to", net], check=True)
-                subprocess.run(["sudo", "ufw", "allow", "from", net], check=True)
-            subprocess.run(["sudo", "ufw", "--force", "enable"], check=True)
-            self.log("Kill switch enabled.")
+                subprocess.run(["sudo", "ufw", "allow", "out", "to", net], check=True, capture_output=True)
+                subprocess.run(["sudo", "ufw", "allow", "in", "from", net], check=True, capture_output=True)
+
+            self.log(f"Kill Switch: Allowing traffic to VPN server {vpn_server_ip}:{vpn_server_port}", "INFO")
+            subprocess.run([
+                "sudo", "ufw", "allow", "out", "on", self.original_iface, "to", vpn_server_ip,
+                "port", vpn_server_port, "proto", vpn_protocol
+            ], check=True, capture_output=True)
+
+            self.log(f"Kill Switch: Allowing all traffic on VPN interface {self.vpn_interface_name}", "INFO")
+            subprocess.run(["sudo", "ufw", "allow", "out", "on", self.vpn_interface_name], check=True, capture_output=True)
+            
+            if self.app_split_setup and self.settings.get("app_split_mode") == "exclude":
+                self.log("Kill Switch: Allowing all traffic on original interface for excluded apps.", "INFO")
+                subprocess.run(["sudo", "ufw", "allow", "out", "on", self.original_iface], check=True, capture_output=True)
+            else:
+                self.log("Kill Switch: Applying DNS leak protection.", "INFO")
+                subprocess.run(["sudo", "ufw", "deny", "out", "on", self.original_iface, "to", "any", "port", "53"], check=True, capture_output=True)
+            
+            subprocess.run(["sudo", "ufw", "enable"], check=True, capture_output=True)
+            self.log("KILL SWITCH ENABLED: Firewall is active and secure.", "SUCCESS")
+
         except Exception as e:
-            self.log(f"Failed to enable kill switch: {e}", "ERROR")
+            error_output = e.stderr.decode() if hasattr(e, 'stderr') and e.stderr else str(e)
+            self.log(f"CRITICAL: FAILED TO ENABLE KILL SWITCH. Internet may be unblocked. Error: {error_output}", "CRITICAL")
+            messagebox.showerror("Kill Switch Failed", f"Could not enable the firewall. Disconnecting for safety.\n\nError: {error_output}")
+            self.disconnect_vpn()
+
     def disable_kill_switch(self):
+        self.log("DISABLING KILL SWITCH: Resetting firewall rules...", "WARNING")
         try:
-            subprocess.run(["sudo", "ufw", "disable"], check=True)
-            self.log("Kill switch disabled.")
+            subprocess.run(["sudo", "ufw", "reset"], input='y', text=True, check=False, capture_output=True)
+            self.log("Kill switch disabled and firewall reset.", "SUCCESS")
         except Exception as e:
-            self.log(f"Failed to disable kill switch: {e}", "WARNING")
+            self.log(f"Failed to cleanly disable kill switch: {e}", "ERROR")
+            
     def reset_ui_to_disconnected(self):
         self.is_connected, self.is_connecting = False, False
         if self.vpn_process:
@@ -778,6 +912,7 @@ class VPNConnectorApp:
         if self.vpn_servers: self.server_menu.config(state='readonly')
         self.split_apps_frame.pack_forget()
         self.stop_bw_monitor.set()
+
     def update_public_ip(self):
         self.root.after(0, lambda: self.ip_label.config(text="Public IP: Fetching..."))
         try:
@@ -785,6 +920,7 @@ class VPNConnectorApp:
             ip = requests.get("https://api.ipify.org", timeout=10).text
             self.root.after(0, lambda: self.ip_label.config(text=f"Public IP: {ip}"))
         except Exception as e: self.log(f"Failed to fetch public IP: {e}", "WARNING"); self.root.after(0, lambda: self.ip_label.config(text="Public IP: Failed"))
+
     def disconnect_vpn(self):
         self.log("Disconnecting..."); self.stop_connecting_event.set(); self.stop_bw_monitor.set()
         if self.vpn_process:
@@ -796,7 +932,9 @@ class VPNConnectorApp:
                 if self.vpn_process: self.vpn_process.kill()
             self.vpn_process = None
         self.reset_ui_to_disconnected(); self.log("Disconnected successfully.", "SUCCESS")
+
     def on_closing(self): self.disconnect_vpn(); self.root.destroy()
+
     def import_ovpn_file(self):
         if self.is_connecting or self.is_connected: messagebox.showwarning("Busy", "Cannot import files while connecting."); return
         filepaths = filedialog.askopenfilenames(title="Import OpenVPN Configuration(s)", filetypes=[("OpenVPN files", "*.ovpn"), ("All files", "*.*")])
@@ -810,8 +948,8 @@ class VPNConnectorApp:
                 shutil.copy(filepath, dest_path); self._process_ovpn_file(dest_path); imported_count += 1
             except Exception as e: self.log(f"Failed to import {filename}: {e}", "ERROR")
         if imported_count > 0: self.load_all_ovpn_configs(); self.update_server_list_from_filter(); messagebox.showinfo("Success", f"Successfully imported {imported_count} file(s).")
+
     def bandwidth_monitor_thread(self):
-        # --- FIX 3: Simplified logic relies on the pre-detected interface name ---
         if not psutil or not self.vpn_interface_name:
             self.log("Bandwidth monitor cannot start: psutil not loaded or VPN interface not detected.", "WARNING")
             return
@@ -841,29 +979,21 @@ class VPNConnectorApp:
             except (KeyError, psutil.NoSuchProcess):
                 break
         self.log("Bandwidth monitor stopped.")
-        # --- END FIX 3 ---
 
 def check_and_install_dependencies():
-    # ... (This function is unchanged and remains complete) ...
-    """
-    Checks for all dependencies (Python libs and OpenVPN) and attempts to install them.
-    Returns True if all dependencies are met, False if installation was needed (requires restart).
-    """
-    # 1. Check for Python Libraries
     required_pip_packages = {'requests': requests, 'psutil': psutil}
     missing_packages = [pkg for pkg, lib in required_pip_packages.items() if lib is None]
     if missing_packages:
         package_str = ", ".join(missing_packages)
         if messagebox.askyesno("Dependencies Missing", f"The following required libraries are missing: {package_str}.\n\nAttempt automatic installation?"):
             try:
-                # Prioritize system package manager on Linux for psutil if possible
                 if 'psutil' in missing_packages and PLATFORM == 'linux' and shutil.which('apt-get'):
                     logging.info("Attempting to install python3-psutil via apt-get...")
                     subprocess.run(["sudo", "apt-get", "update"], check=True)
                     subprocess.run(["sudo", "apt-get", "install", "python3-psutil", "-y"], check=True)
-                    missing_packages.remove('psutil') # Remove from pip list
+                    missing_packages.remove('psutil')
                 
-                if missing_packages: # Install the rest with pip
+                if missing_packages:
                     pip_cmd = [sys.executable, "-m", "pip", "install"] + missing_packages
                     logging.info(f"Running pip to install: {' '.join(pip_cmd)}")
                     subprocess.run(pip_cmd, check=True)
@@ -871,8 +1001,8 @@ def check_and_install_dependencies():
                 messagebox.showinfo("Installation Complete", "Dependencies have been installed. Please restart the application.")
             except Exception as e:
                 messagebox.showerror("Installation Failed", f"Failed to install libraries. Please install them manually.\n\nError: {e}\n\nCommand: `pip install {' '.join(missing_packages)}`")
-        return False # Always require restart after attempting installation
-    # 2. Check for OpenVPN Executable
+        return False
+    
     openvpn_path = shutil.which('openvpn')
     if not openvpn_path and PLATFORM == 'windows':
         for path in [r"C:\Program Files\OpenVPN\bin\openvpn.exe", r"C:\Program Files (x86)\OpenVPN\bin\openvpn.exe"]:
@@ -880,30 +1010,42 @@ def check_and_install_dependencies():
                 openvpn_path = path
                 break
     
-    if openvpn_path:
-        logging.info(f"Found OpenVPN executable at: {openvpn_path}")
-        return True # All good, continue startup
-    # OpenVPN is not found, attempt platform-specific installation
-    if not messagebox.askyesno("OpenVPN Not Found", "The OpenVPN client is not installed or not in your system's PATH.\n\nWould you like to attempt an automatic installation?"):
+    if not openvpn_path:
+        if not messagebox.askyesno("OpenVPN Not Found", "The OpenVPN client is not installed or not in your system's PATH.\n\nWould you like to attempt an automatic installation?"):
+            return False
+        install_success = False
+        try:
+            if PLATFORM == 'windows': install_success = install_openvpn_windows()
+            elif PLATFORM == 'linux': install_success = install_openvpn_linux()
+            elif PLATFORM == 'macos': install_success = install_openvpn_macos()
+        except Exception as e:
+            logging.error(f"An unexpected error occurred during OpenVPN installation: {e}")
+            messagebox.showerror("Installation Error", f"An unexpected error occurred: {e}")
+        if install_success:
+            messagebox.showinfo("Installation Complete", "OpenVPN has been installed. Please restart the application for the changes to take effect.")
         return False
-    install_success = False
-    try:
-        if PLATFORM == 'windows':
-            install_success = install_openvpn_windows()
-        elif PLATFORM == 'linux':
-            install_success = install_openvpn_linux()
-        elif PLATFORM == 'macos':
-            install_success = install_openvpn_macos()
-    except Exception as e:
-        logging.error(f"An unexpected error occurred during OpenVPN installation: {e}")
-        messagebox.showerror("Installation Error", f"An unexpected error occurred: {e}")
-    if install_success:
-        messagebox.showinfo("Installation Complete", "OpenVPN has been installed. Please restart the application for the changes to take effect.")
-    
-    return False # Always require restart after OpenVPN installation attempt
+
+    if PLATFORM == 'linux' and not shutil.which('ufw'):
+        temp_settings = {}
+        try:
+            with open(CONFIG_FILE, 'r') as f: temp_settings = json.load(f)
+        except: pass
+        
+        if temp_settings.get("kill_switch", False):
+            if messagebox.askyesno("Dependency Missing", "The 'ufw' firewall is required for the Kill Switch on Linux but is not found.\n\nWould you like to attempt to install it now?"):
+                try:
+                    logging.info("Attempting to install ufw via apt-get...")
+                    subprocess.run(["sudo", "apt-get", "update"], check=True)
+                    subprocess.run(["sudo", "apt-get", "install", "ufw", "-y"], check=True)
+                    messagebox.showinfo("Installation Complete", "'ufw' has been installed. Please restart the application.")
+                except Exception as e:
+                    messagebox.showerror("Installation Failed", f"Failed to install 'ufw'. Please install it manually using your system's package manager.\n\nError: {e}")
+            return False
+
+    logging.info("All dependencies are met.")
+    return True
 
 def install_openvpn_windows():
-    # ... (This function is unchanged and remains complete) ...
     logging.info("Attempting to install OpenVPN on Windows...")
     installer_path = os.path.join(tempfile.gettempdir(), "OpenVPN-Installer.msi")
     try:
@@ -915,7 +1057,6 @@ def install_openvpn_windows():
                     f.write(chunk)
         
         logging.info("Download complete. Running MSI installer silently...")
-        # Use /passive for a basic UI, /quiet for fully silent
         subprocess.run(['msiexec', '/i', installer_path, '/passive'], check=True)
         logging.info("OpenVPN installation command executed.")
         return True
@@ -928,20 +1069,9 @@ def install_openvpn_windows():
             os.remove(installer_path)
 
 def install_openvpn_linux():
-    # ... (This function is unchanged and remains complete) ...
     logging.info("Attempting to install OpenVPN on Linux...")
-    package_managers = {
-        'apt-get': ["sudo", "apt-get", "update", "-y"],
-        'dnf': ["sudo", "dnf", "check-update"],
-        'yum': ["sudo", "yum", "check-update"],
-        'pacman': ["sudo", "pacman", "-Sy"]
-    }
-    install_commands = {
-        'apt-get': ["sudo", "apt-get", "install", "openvpn", "-y"],
-        'dnf': ["sudo", "dnf", "install", "openvpn", "-y"],
-        'yum': ["sudo", "yum", "install", "openvpn", "-y"],
-        'pacman': ["sudo", "pacman", "-S", "openvpn", "--noconfirm"]
-    }
+    package_managers = { 'apt-get': ["sudo", "apt-get", "update", "-y"], 'dnf': ["sudo", "dnf", "check-update"], 'yum': ["sudo", "yum", "check-update"], 'pacman': ["sudo", "pacman", "-Sy"] }
+    install_commands = { 'apt-get': ["sudo", "apt-get", "install", "openvpn", "-y"], 'dnf': ["sudo", "dnf", "install", "openvpn", "-y"], 'yum': ["sudo", "yum", "install", "openvpn", "-y"], 'pacman': ["sudo", "pacman", "-S", "openvpn", "--noconfirm"] }
     for pm, update_cmd in package_managers.items():
         if shutil.which(pm):
             try:
@@ -959,7 +1089,6 @@ def install_openvpn_linux():
     return False
 
 def install_openvpn_macos():
-    # ... (This function is unchanged and remains complete) ...
     logging.info("Attempting to install OpenVPN on macOS via Homebrew...")
     if not shutil.which('brew'):
         messagebox.showerror("Homebrew Not Found", "Homebrew is required to auto-install OpenVPN on macOS.\n\nPlease install it from brew.sh and try again.")
@@ -977,29 +1106,23 @@ def install_openvpn_macos():
         return False
 
 def main():
-    # A hidden root is needed for message boxes if the main app doesn't start
     root = tk.Tk()
     root.withdraw()
     
     if not is_admin():
         messagebox.showerror("Admin Rights Required", "This application requires administrator (or sudo) rights to manage network settings and install dependencies. Please run it again as an administrator.")
         return
-    # Run the new self-healing dependency check
+    
     if not check_and_install_dependencies():
-        # This means an installation was attempted and a restart is required.
-        # The function already showed a message to the user.
         return
     
-    # If we get here, all dependencies are met. We can now find OpenVPN and launch the app.
     openvpn_path = shutil.which('openvpn') or next((p for p in [r"C:\Program Files\OpenVPN\bin\openvpn.exe", r"C:\Program Files (x86)\OpenVPN\bin\openvpn.exe"] if PLATFORM == 'windows' and os.path.exists(p)), None)
     
-    # This check is now a fallback, as check_and_install should have handled it.
     if not openvpn_path:
         messagebox.showerror("Fatal Error", "OpenVPN is still not found after an installation attempt. Please check your system's PATH or install it manually.")
         return
         
-    # Instead of creating a new Toplevel window, un-hide and use the original root window.
-    root.deiconify() 
+    root.deiconify()  
     app = VPNConnectorApp(root, openvpn_path)
     root.mainloop()
 
