@@ -762,7 +762,7 @@ class VPNConnectorApp:
 
     def add_route(self, destination, gateway, interface=None):
         if PLATFORM in ("linux", "macos"):
-            cmd = PLATFORM_CONFIG['sudo_prefix'] + ["ip", "route", "add", destination, "via", gateway]
+            cmd = PLATFORM_CONFIG['sudo_prefix'] + ["ip", "route", "replace", destination, "via", gateway]
             if interface: cmd += ["dev", interface]
         elif PLATFORM == "windows":
             network, mask = self.cidr_to_netmask(destination)
@@ -770,9 +770,14 @@ class VPNConnectorApp:
         try:
             subprocess.run(cmd, check=True, capture_output=True)
             self.active_routes.append((destination, gateway, interface))
-            self.log(f"Added route {destination} via {gateway}")
+            self.log(f"Added/Replaced route {destination} via {gateway}")
         except Exception as e:
-            self.log(f"Failed to add route {destination}: {e}", "ERROR")
+            error_output = e.stderr.decode().strip() if hasattr(e, 'stderr') and e.stderr else str(e)
+            if "File exists" in error_output or "The object already exists" in error_output:
+                self.log(f"Route for {destination} already exists, which is OK.", "INFO")
+                self.active_routes.append((destination, gateway, interface))
+            else:
+                self.log(f"Failed to add route {destination}: {error_output}", "ERROR")
 
     def delete_route(self, destination, gateway, interface=None):
         if PLATFORM in ("linux", "macos"):
